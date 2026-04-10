@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const Groq = require('groq-sdk');
 
-// ── Clients ──────────────────────────────────────────────────────────────────
+// ── Clients ───────────────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
@@ -41,16 +41,14 @@ async function extractIntent(userMessage) {
           role: 'system',
           content: `You are a resource assistant for Campus Circle — an academic platform for UNIZIK (Nnamdi Azikiwe University) students.
 
-Extract the department code, level, and resource type from the student's message.
+Extract the level and resource keywords from the student's message.
 Respond ONLY in valid JSON with no extra text:
-{"department":"SOC","level":"300","resource_type":"past questions"}
+{"level":"300","keywords":"social stratification lecture note"}
 
-Department codes: SOC, PSC, ECO, LAW, ENG, MED, PHY, CHM, BIO, MTH, CSC, BUS, ACC, MKT, PUB, MAS, REL, HIS, GEO, ARC, CVE, ELE, MEC
-Resource types: past questions, lecture notes, textbook, assignment, handout
-Level: 100, 200, 300, 400, 500
+Level must be one of: 100, 200, 300, 400, 500
+Keywords should be the most important words from the request to search by title.
 
-If unsure about any field, use null.
-If the message is NOT a resource request, respond: {"intent":"other","message":"<your reply>"}`,
+If the message is NOT a resource request, respond: {"intent":"other","message":"<a helpful reply>"}`,
         },
         { role: 'user', content: userMessage },
       ],
@@ -65,17 +63,34 @@ If the message is NOT a resource request, respond: {"intent":"other","message":"
 
 // ── Resource lookup ───────────────────────────────────────────────────────────
 async function findResource(intent) {
+  // Build search from keywords
+  const keywords = intent.keywords || '';
+  const level = intent.level ? `${intent.level}L` : null;
+
   let query = supabase
     .from('academic_resources')
-    .select('id, title, file_url, is_paid, price, department, level')
+    .select('id, title, file_url, is_paid, softcopy_price, level')
+    .ilike('title', `%${keywords}%`)
     .limit(3);
 
-  if (intent.department) query = query.ilike('department', intent.department);
-  if (intent.level) query = query.ilike('level', `%${intent.level}%`);
-  if (intent.resource_type)
-    query = query.ilike('title', `%${intent.resource_type}%`);
+  if (level) {
+    query = query.eq('level', level);
+  }
 
   const { data, error } = await query;
+
+  // If level filter returns nothing, try without level
+  if ((error || !data?.length) && level) {
+    const { data: data2, error: error2 } = await supabase
+      .from('academic_resources')
+      .select('id, title, file_url, is_paid, softcopy_price, level')
+      .ilike('title', `%${keywords}%`)
+      .limit(3);
+
+    if (error2 || !data2?.length) return null;
+    return data2;
+  }
+
   if (error || !data?.length) return null;
   return data;
 }
@@ -89,7 +104,7 @@ async function generatePaystackLink(resource, phone) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      amount: resource.price * 100, // kobo
+      amount: resource.softcopy_price * 100,
       currency: 'NGN',
       reference: `cc_wa_${resource.id}_${Date.now()}`,
       metadata: {
@@ -108,18 +123,17 @@ async function generatePaystackLink(resource, phone) {
 async function handleMessage(phone, text) {
   const lower = text.toLowerCase().trim();
 
-  // Commands
   if (lower === 'hi' || lower === 'hello' || lower === 'start') {
     return sendMessage(
       phone,
-      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 Just tell me what you need. Examples:\n• _"SOC 309 past questions"_\n• _"300 level economics lecture notes"_\n• _"ENG 201 handout"_\n\n🌐 Full platform: campuscircles.vercel.app\n\nType *help* anytime for more options.`
+      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 Just tell me what you need. Examples:\n• _"Social stratification lecture note"_\n• _"300 level political sociology"_\n• _"Principles of economics"_\n\n🌐 Full platform: campuscircles.vercel.app\n\nType *help* anytime for more options.`
     );
   }
 
   if (lower === 'help') {
     return sendMessage(
       phone,
-      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:* Just describe what you need\nE.g. _"SOC 309 past questions"_\n\n🌐 *Visit site:* campuscircles.vercel.app\n\n📩 *Support:* Reply with your issue and we'll help you.`
+      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:* Just describe what you need\nE.g. _"Social stratification lecture note"_\n\n🌐 *Visit site:* campuscircles.vercel.app\n\n📩 *Support:* Reply with your issue and we'll help you.`
     );
   }
 
@@ -129,7 +143,7 @@ async function handleMessage(phone, text) {
   if (intent.intent === 'other') {
     const reply =
       intent.message ||
-      "I'm here to help you find academic resources 📚\n\nTry something like: _\"SOC 309 past questions\"_ or visit campuscircles.vercel.app";
+      "I'm here to help you find academic resources 📚\n\nTry something like: _\"Social stratification lecture note\"_ or visit campuscircles.vercel.app";
     return sendMessage(phone, reply);
   }
 
@@ -139,19 +153,18 @@ async function handleMessage(phone, text) {
   if (!resources) {
     return sendMessage(
       phone,
-      `😔 I couldn't find that resource right now.\n\nTry rephrasing or visit *campuscircles.vercel.app* to browse all materials.\n\nYou can also describe it differently — e.g. include the course code.`
+      `😔 I couldn't find that resource.\n\nTry rephrasing — e.g. _"Social stratification lecture note"_ or visit *campuscircles.vercel.app* to browse all materials.`
     );
   }
 
-  // If multiple results
+  // Multiple results
   if (resources.length > 1) {
     let msg = `📚 I found ${resources.length} resources:\n\n`;
     resources.forEach((r, i) => {
-      msg += `${i + 1}. *${r.title}*${r.is_paid ? ` — ₦${r.price}` : ' — Free'}\n`;
+      msg += `${i + 1}. *${r.title}* (${r.level})${r.is_paid === 'true' || r.is_paid === true ? ` — ₦${r.softcopy_price}` : ' — Free'}\n`;
     });
     msg += `\nReply with the number to get it. E.g. _"1"_`;
 
-    // Store options temporarily in Supabase for follow-up
     await supabase.from('whatsapp_sessions').upsert({
       phone,
       options: JSON.stringify(resources),
@@ -163,15 +176,15 @@ async function handleMessage(phone, text) {
 
   // Single result
   const resource = resources[0];
+  const isPaid = resource.is_paid === 'true' || resource.is_paid === true;
 
-  if (!resource.is_paid) {
+  if (!isPaid) {
     return sendMessage(
       phone,
-      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
+      `✅ *${resource.title}* (${resource.level})\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
     );
   }
 
-  // Paid resource
   const payLink = await generatePaystackLink(resource, phone);
   if (!payLink) {
     return sendMessage(phone, `⚠️ Payment link failed. Please try via the site: campuscircles.vercel.app`);
@@ -179,7 +192,7 @@ async function handleMessage(phone, text) {
 
   return sendMessage(
     phone,
-    `📄 *${resource.title}*\n\n💳 This resource costs *₦${resource.price}*\n\nPay securely here:\n${payLink}\n\nYou'll receive the Drive link immediately after payment ✅`
+    `📄 *${resource.title}* (${resource.level})\n\n💳 This resource costs *₦${resource.softcopy_price}*\n\nPay securely here:\n${payLink}\n\nYou'll receive the link immediately after payment ✅`
   );
 }
 
@@ -200,27 +213,27 @@ async function handleNumberedReply(phone, text) {
   const resource = options[num - 1];
   if (!resource) return false;
 
-  if (!resource.is_paid) {
+  const isPaid = resource.is_paid === 'true' || resource.is_paid === true;
+
+  if (!isPaid) {
     await sendMessage(
       phone,
-      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
+      `✅ *${resource.title}* (${resource.level})\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
     );
   } else {
     const payLink = await generatePaystackLink(resource, phone);
     await sendMessage(
       phone,
-      `📄 *${resource.title}*\n\n💳 This resource costs *₦${resource.price}*\n\nPay securely here:\n${payLink}\n\nYou'll receive the Drive link immediately after payment ✅`
+      `📄 *${resource.title}*\n\n💳 This resource costs *₦${resource.softcopy_price}*\n\nPay securely here:\n${payLink}\n\nYou'll receive the link immediately after payment ✅`
     );
   }
 
-  // Clear session
   await supabase.from('whatsapp_sessions').delete().eq('phone', phone);
   return true;
 }
 
 // ── Vercel serverless handler ─────────────────────────────────────────────────
 module.exports = async function handler(req, res) {
-  // Webhook verification (one-time setup)
   if (req.method === 'GET') {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -232,7 +245,6 @@ module.exports = async function handler(req, res) {
     return res.status(403).send('Forbidden');
   }
 
-  // Incoming messages
   if (req.method === 'POST') {
     try {
       const body = req.body;
@@ -249,16 +261,15 @@ module.exports = async function handler(req, res) {
 
       if (!text) return res.status(200).send('OK');
 
-      // Check numbered reply first
       const handled = await handleNumberedReply(phone, text);
       if (!handled) await handleMessage(phone, text);
 
       return res.status(200).send('OK');
     } catch (err) {
       console.error('Webhook error:', err);
-      return res.status(200).send('OK'); // Always 200 to WhatsApp
+      return res.status(200).send('OK');
     }
   }
 
   return res.status(405).send('Method not allowed');
-}
+};
