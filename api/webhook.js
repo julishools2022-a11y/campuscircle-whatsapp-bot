@@ -67,7 +67,7 @@ If the message is NOT a resource request, respond: {"intent":"other","message":"
 async function findResource(intent) {
   let query = supabase
     .from('academic_resources')
-    .select('id, title, drive_link, is_paid, price, department, level')
+    .select('id, title, file_url, is_paid, price, department, level')
     .limit(3);
 
   if (intent.department) query = query.ilike('department', intent.department);
@@ -95,7 +95,7 @@ async function generatePaystackLink(resource, phone) {
       metadata: {
         resource_id: resource.id,
         whatsapp_phone: phone,
-        drive_link: resource.drive_link,
+        file_url: resource.drive_link,
       },
       callback_url: `${process.env.BASE_URL}/api/payment-callback`,
     }),
@@ -129,7 +129,7 @@ async function handleMessage(phone, text) {
   if (intent.intent === 'other') {
     const reply =
       intent.message ||
-      "I'm here to help you find academic resources 📚\n\nTry something like: _\"SOC 309 past questions\"_ or visit campuscircle.name.ng";
+      "I'm here to help you find academic resources 📚\n\nTry something like: _\"SOC 309 past questions\"_ or visit campuscircles.vercel.app";
     return sendMessage(phone, reply);
   }
 
@@ -139,7 +139,7 @@ async function handleMessage(phone, text) {
   if (!resources) {
     return sendMessage(
       phone,
-      `😔 I couldn't find that resource right now.\n\nTry rephrasing or visit *campuscircle.name.ng* to browse all materials.\n\nYou can also describe it differently — e.g. include the course code.`
+      `😔 I couldn't find that resource right now.\n\nTry rephrasing or visit *campuscircles.vercel.app* to browse all materials.\n\nYou can also describe it differently — e.g. include the course code.`
     );
   }
 
@@ -167,14 +167,14 @@ async function handleMessage(phone, text) {
   if (!resource.is_paid) {
     return sendMessage(
       phone,
-      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.drive_link}\n\n📌 For more materials visit campuscircle.name.ng`
+      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
     );
   }
 
   // Paid resource
   const payLink = await generatePaystackLink(resource, phone);
   if (!payLink) {
-    return sendMessage(phone, `⚠️ Payment link failed. Please try via the site: campuscircle.name.ng`);
+    return sendMessage(phone, `⚠️ Payment link failed. Please try via the site: campuscircles.vercel.app`);
   }
 
   return sendMessage(
@@ -203,7 +203,7 @@ async function handleNumberedReply(phone, text) {
   if (!resource.is_paid) {
     await sendMessage(
       phone,
-      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.drive_link}\n\n📌 For more materials visit campuscircle.name.ng`
+      `✅ *${resource.title}*\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
     );
   } else {
     const payLink = await generatePaystackLink(resource, phone);
