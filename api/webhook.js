@@ -95,7 +95,7 @@ async function generatePaystackLink(resource, phone) {
       metadata: {
         resource_id: resource.id,
         whatsapp_phone: phone,
-        file_url: resource.drive_link,
+        file_url: resource.file_url,
       },
       callback_url: `${process.env.BASE_URL}/api/payment-callback`,
     }),
@@ -112,14 +112,14 @@ async function handleMessage(phone, text) {
   if (lower === 'hi' || lower === 'hello' || lower === 'start') {
     return sendMessage(
       phone,
-      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 Just tell me what you need. Examples:\n• _"SOC 309 past questions"_\n• _"300 level economics lecture notes"_\n• _"ENG 201 handout"_\n\n🌐 Full platform: campuscircle.name.ng\n\nType *help* anytime for more options.`
+      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 Just tell me what you need. Examples:\n• _"SOC 309 past questions"_\n• _"300 level economics lecture notes"_\n• _"ENG 201 handout"_\n\n🌐 Full platform: campuscircles.vercel.app\n\nType *help* anytime for more options.`
     );
   }
 
   if (lower === 'help') {
     return sendMessage(
       phone,
-      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:* Just describe what you need\nE.g. _"SOC 309 past questions"_\n\n🌐 *Visit site:* campuscircle.name.ng\n\n📩 *Support:* Reply with your issue and we'll help you.`
+      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:* Just describe what you need\nE.g. _"SOC 309 past questions"_\n\n🌐 *Visit site:* campuscircles.vercel.app\n\n📩 *Support:* Reply with your issue and we'll help you.`
     );
   }
 
