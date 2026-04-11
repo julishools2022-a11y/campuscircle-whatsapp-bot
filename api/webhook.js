@@ -76,7 +76,6 @@ async function findResource(intent) {
 
   const { data, error } = await query;
 
-  // Fallback without level filter
   if ((error || !data?.length) && level) {
     const { data: data2, error: error2 } = await supabase
       .from('academic_resources')
@@ -112,6 +111,9 @@ async function listResources(intent) {
 // ── Paystack link generator ───────────────────────────────────────────────────
 async function generatePaystackLink(resource, phone) {
   try {
+    const amount = Math.round(Number(resource.softcopy_price) * 100);
+    console.log('Paystack init — amount:', amount, 'resource_id:', resource.id);
+
     const res = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
@@ -119,7 +121,7 @@ async function generatePaystackLink(resource, phone) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        amount: resource.softcopy_price * 100,
+        amount,
         currency: 'NGN',
         reference: `cc_wa_${resource.id}_${Date.now()}`,
         metadata: {
@@ -129,9 +131,12 @@ async function generatePaystackLink(resource, phone) {
         },
       }),
     });
+
     const data = await res.json();
+    console.log('Paystack response:', JSON.stringify(data));
     return data?.data?.authorization_url || null;
-  } catch {
+  } catch (err) {
+    console.error('Paystack error:', err);
     return null;
   }
 }
@@ -196,7 +201,6 @@ async function handleNumberedReply(phone, text) {
 async function handleMessage(phone, text) {
   const lower = text.toLowerCase().trim();
 
-  // Welcome
   if (lower === 'hi' || lower === 'hello' || lower === 'start') {
     return sendMessage(
       phone,
@@ -204,7 +208,6 @@ async function handleMessage(phone, text) {
     );
   }
 
-  // Help
   if (lower === 'help') {
     return sendMessage(
       phone,
@@ -212,7 +215,6 @@ async function handleMessage(phone, text) {
     );
   }
 
-  // List resources
   if (
     lower.includes('list') ||
     lower.includes('available') ||
@@ -242,7 +244,6 @@ async function handleMessage(phone, text) {
     return sendMessage(phone, msg);
   }
 
-  // AI intent extraction
   const intent = await extractIntent(text);
 
   if (intent.intent === 'other') {
@@ -252,7 +253,6 @@ async function handleMessage(phone, text) {
     return sendMessage(phone, reply);
   }
 
-  // Search resources
   const resources = await findResource(intent);
 
   if (!resources) {
@@ -262,7 +262,6 @@ async function handleMessage(phone, text) {
     );
   }
 
-  // Multiple results
   if (resources.length > 1) {
     let msg = `📚 I found ${resources.length} resources:\n\n`;
     resources.forEach((r, i) => {
@@ -275,7 +274,6 @@ async function handleMessage(phone, text) {
     return sendMessage(phone, msg);
   }
 
-  // Single result
   return sendResource(phone, resources[0]);
 }
 
