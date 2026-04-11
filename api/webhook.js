@@ -127,7 +127,6 @@ async function generatePaystackLink(resource, phone) {
           whatsapp_phone: phone,
           file_url: resource.file_url,
         },
-        callback_url: `${process.env.BASE_URL}/api/payment-callback`,
       }),
     });
     const data = await res.json();
@@ -144,7 +143,7 @@ async function sendResource(phone, resource) {
   if (!isPaid) {
     return sendMessage(
       phone,
-      `✅ *${resource.title}* (${resource.level})\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircle.name.ng`
+      `✅ *${resource.title}* (${resource.level})\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircles.vercel.app`
     );
   }
 
@@ -152,17 +151,17 @@ async function sendResource(phone, resource) {
   if (!payLink) {
     return sendMessage(
       phone,
-      `⚠️ Payment link failed. Please get this resource directly on the site:\ncampuscircle.name.ng`
+      `⚠️ Payment link failed. Please get this resource directly on the site:\ncampuscircles.vercel.app`
     );
   }
 
   return sendMessage(
     phone,
-    `📄 *${resource.title}* (${resource.level})\n\n💳 This resource costs *₦${resource.softcopy_price}*\n\nPay securely here:\n${payLink}\n\nYou'll receive the Drive link immediately after payment ✅`
+    `📄 *${resource.title}* (${resource.level})\n\n💳 This resource costs *₦${resource.softcopy_price}*\n\nPay securely here:\n${payLink}\n\nYou will receive the Drive link immediately after payment ✅`
   );
 }
 
-// ── Save session options ──────────────────────────────────────────────────────
+// ── Save session ──────────────────────────────────────────────────────────────
 async function saveSession(phone, resources) {
   await supabase.from('whatsapp_sessions').upsert({
     phone,
@@ -201,7 +200,7 @@ async function handleMessage(phone, text) {
   if (lower === 'hi' || lower === 'hello' || lower === 'start') {
     return sendMessage(
       phone,
-      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 *Find a resource:*\nJust tell me what you need\n_"Social stratification lecture note"_\n_"300 level political sociology"_\n\n📋 *Browse by level:*\nType _"list 300 level"_ to see all available\n\n🌐 Full platform: campuscircle.name.ng\n\nType *help* for more options.`
+      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 *Find a resource:*\nJust tell me what you need\n_"Social stratification lecture note"_\n_"300 level political sociology"_\n\n📋 *Browse by level:*\nType _"list 300 level"_ to see all available\n\n🌐 Full platform: campuscircles.vercel.app\n\nType *help* for more options.`
     );
   }
 
@@ -209,7 +208,7 @@ async function handleMessage(phone, text) {
   if (lower === 'help') {
     return sendMessage(
       phone,
-      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:*\nJust describe what you need\n_"Social stratification lecture note"_\n\n📋 *List resources:*\n_"list 300 level"_\n_"show 200 level resources"_\n_"available 100 level"_\n\n🌐 *Visit site:* campuscircle.name.ng\n\n📩 *Support:* Describe your issue and we'll help.`
+      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:*\nJust describe what you need\n_"Social stratification lecture note"_\n\n📋 *List resources:*\n_"list 300 level"_\n_"show 200 level resources"_\n_"available 100 level"_\n\n🌐 *Visit site:* campuscircles.vercel.app\n\n📩 *Support:* Describe your issue and we'll help.`
     );
   }
 
@@ -227,7 +226,7 @@ async function handleMessage(phone, text) {
     if (!resources) {
       return sendMessage(
         phone,
-        `😔 No resources found${intent.level ? ` for ${intent.level}L` : ''} yet.\n\nVisit *campuscircle.name.ng* to browse all materials.`
+        `😔 No resources found${intent.level ? ` for ${intent.level}L` : ''} yet.\n\nVisit *campuscircles.vercel.app* to browse all materials.`
       );
     }
 
@@ -243,13 +242,13 @@ async function handleMessage(phone, text) {
     return sendMessage(phone, msg);
   }
 
-  // AI intent extraction for resource search
+  // AI intent extraction
   const intent = await extractIntent(text);
 
   if (intent.intent === 'other') {
     const reply =
       intent.message ||
-      `I'm here to help you find academic resources 📚\n\nTry:\n• _"Social stratification lecture note"_\n• _"list 300 level resources"_\n\nOr visit campuscircle.name.ng`;
+      `I'm here to help you find academic resources 📚\n\nTry:\n• _"Social stratification lecture note"_\n• _"list 300 level resources"_\n\nOr visit campuscircles.vercel.app`;
     return sendMessage(phone, reply);
   }
 
@@ -259,11 +258,11 @@ async function handleMessage(phone, text) {
   if (!resources) {
     return sendMessage(
       phone,
-      `😔 I couldn't find that resource.\n\nTry:\n• Rephrasing your request\n• _"list ${intent.level || '300'} level"_ to browse all available\n• Visit *campuscircle.name.ng*`
+      `😔 I couldn't find that resource.\n\nTry:\n• Rephrasing your request\n• _"list ${intent.level || '300'} level"_ to browse all available\n• Visit *campuscircles.vercel.app*`
     );
   }
 
-  // Multiple results — show list
+  // Multiple results
   if (resources.length > 1) {
     let msg = `📚 I found ${resources.length} resources:\n\n`;
     resources.forEach((r, i) => {
