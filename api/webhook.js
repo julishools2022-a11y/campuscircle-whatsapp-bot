@@ -112,7 +112,7 @@ async function listResources(intent) {
 async function generatePaystackLink(resource, phone) {
   try {
     const amount = Math.round(Number(resource.softcopy_price) * 100);
-    console.log('Paystack init — amount:', amount, 'resource_id:', resource.id);
+    const email = `${phone}@campuscircle.ng`;
 
     const res = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
@@ -121,6 +121,7 @@ async function generatePaystackLink(resource, phone) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        email,
         amount,
         currency: 'NGN',
         reference: `cc_wa_${resource.id}_${Date.now()}`,
