@@ -9,6 +9,56 @@ const supabase = createClient(
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// ── Admin numbers ─────────────────────────────────────────────────────────────
+const ADMIN_NUMBERS = [
+  process.env.ADMIN_PHONE_1,
+  process.env.ADMIN_PHONE_2,
+  process.env.ADMIN_PHONE_3,
+].filter(Boolean);
+
+const CAMPUS_CIRCLE_KNOWLEDGE = `
+You are the official AI assistant for Campus Circle — Your Ultimate Academic Success Partner.
+
+ABOUT CAMPUS CIRCLE:
+Campus Circle is a digital academic platform built specifically for UNIZIK (Nnamdi Azikiwe University) students. It digitizes the campus library experience so students can focus on studying smarter, passing exams, and achieving academic excellence.
+
+KEY FEATURES:
+1. Complete Lecture Notes — Comprehensive, well-structured notes so students never miss important points taught in class.
+2. Digital Library — Instantly unlock and read soft copy PDFs of faculty and departmental handouts, textbooks, and past questions right from your phone.
+3. Hardcopy Delivery — Order printed materials and get them delivered straight to your hostel or the campus gate.
+4. Instant Alerts — Real-time notifications when new study materials for your department are uploaded.
+5. AI Study Companion — An AI assistant that helps students understand course content and prepare for exams.
+6. CBT Quiz Practice — Practice mode to prepare for computer-based tests.
+
+WHY CAMPUS CIRCLE:
+- Verified and trusted platform
+- Covers all UNIZIK faculties and departments
+- Safe, secure and student-focused
+- Bringing innovation to student learning
+
+WEBSITE: campuscircles.vercel.app
+
+HOW TO GET STARTED:
+1. Visit campuscircles.vercel.app
+2. Create a free account
+3. Browse resources by department and level
+4. Purchase softcopy or order hardcopy delivery
+
+SUPPORT:
+- For missing resources, report via this chat
+- For payment issues, contact support via the site
+- For general questions, ask this assistant anytime
+
+YOUR ROLE:
+- Help students find academic resources
+- Answer any question about Campus Circle
+- Answer general academic questions to help students study
+- Be friendly, helpful and speak like a knowledgeable campus companion
+- Always encourage students to visit campuscircles.vercel.app for full access
+- If asked about a specific resource, check availability and send the site link
+- Never make up resource information — only confirm what exists in the database
+`;
+
 // ── WhatsApp sender ───────────────────────────────────────────────────────────
 async function sendMessage(to, text) {
   const res = await fetch(
@@ -30,7 +80,74 @@ async function sendMessage(to, text) {
   return res.json();
 }
 
-// ── Groq intent extractor ─────────────────────────────────────────────────────
+// ── Send email via Resend ─────────────────────────────────────────────────────
+async function sendEmail(subject, body) {
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Campus Circle Bot <bot@campuscircle.ng>',
+        to: [process.env.ADMIN_EMAIL || 'campuscircle@gmail.com'],
+        subject,
+        text: body,
+      }),
+    });
+  } catch (err) {
+    console.error('Email error:', err);
+  }
+}
+
+// ── Get or create bot user ────────────────────────────────────────────────────
+async function getUser(phone) {
+  const { data } = await supabase
+    .from('bot_users')
+    .select('*')
+    .eq('phone', phone)
+    .single();
+  return data || null;
+}
+
+async function createUser(phone, name, email) {
+  const { data } = await supabase
+    .from('bot_users')
+    .upsert({ phone, full_name: name, email, is_admin: false })
+    .select()
+    .single();
+  return data;
+}
+
+// ── Track all users for broadcast ─────────────────────────────────────────────
+async function trackUser(phone) {
+  await supabase
+    .from('bot_users')
+    .upsert({ phone, updated_at: new Date().toISOString() }, { onConflict: 'phone', ignoreDuplicates: false });
+}
+
+// ── Groq AI response ──────────────────────────────────────────────────────────
+async function getAIResponse(userMessage, context = '') {
+  try {
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 400,
+      messages: [
+        {
+          role: 'system',
+          content: CAMPUS_CIRCLE_KNOWLEDGE + (context ? `\n\nADDITIONAL CONTEXT:\n${context}` : ''),
+        },
+        { role: 'user', content: userMessage },
+      ],
+    });
+    return response.choices[0].message.content.trim();
+  } catch {
+    return `I'm having trouble responding right now. Please visit campuscircles.vercel.app for assistance.`;
+  }
+}
+
+// ── Extract intent ────────────────────────────────────────────────────────────
 async function extractIntent(userMessage) {
   try {
     const response = await groq.chat.completions.create({
@@ -39,197 +156,259 @@ async function extractIntent(userMessage) {
       messages: [
         {
           role: 'system',
-          content: `You are a resource assistant for Campus Circle — an academic platform for UNIZIK (Nnamdi Azikiwe University) students.
+          content: `You are a classifier for a UNIZIK academic resource bot.
 
-Extract the level and resource keywords from the student's message.
-Respond ONLY in valid JSON with no extra text:
-{"level":"300","keywords":"social stratification lecture note"}
+Classify the student's message into one of these intents:
+- "resource_search" — looking for a specific resource
+- "resource_list" — wants to see available resources for a level
+- "missing_report" — reporting a resource that doesn't exist on the platform
+- "registration" — wants to register or create an account
+- "my_library" — wants to see their purchased/saved resources
+- "support" — has a complaint, issue or question about the platform
+- "general" — general academic question or anything else
 
-Level must be one of: 100, 200, 300, 400, 500
-Keywords should be the most important words from the request to search by title.
+Also extract:
+- level: 100, 200, 300, 400, 500 or null
+- keywords: most important search words or null
 
-If the message is NOT a resource request, respond: {"intent":"other","message":"<a helpful reply>"}`,
+Respond ONLY in valid JSON:
+{"intent":"resource_search","level":"300","keywords":"social stratification lecture note"}`,
         },
         { role: 'user', content: userMessage },
       ],
     });
-
     const raw = response.choices[0].message.content.trim();
     return JSON.parse(raw);
   } catch {
-    return { intent: 'other', message: null };
+    return { intent: 'general', level: null, keywords: null };
   }
 }
 
 // ── Resource lookup ───────────────────────────────────────────────────────────
-async function findResource(intent) {
-  const keywords = intent.keywords || '';
-  const level = intent.level ? `${intent.level}L` : null;
+async function findResource(keywords, level) {
+  const levelStr = level ? `${level}L` : null;
 
   let query = supabase
     .from('academic_resources')
-    .select('id, title, file_url, is_paid, softcopy_price, level')
+    .select('id, title, level, department')
     .ilike('title', `%${keywords}%`)
     .limit(3);
 
-  if (level) query = query.eq('level', level);
+  if (levelStr) query = query.eq('level', levelStr);
 
   const { data, error } = await query;
 
-  if ((error || !data?.length) && level) {
-    const { data: data2, error: error2 } = await supabase
+  if ((error || !data?.length) && levelStr) {
+    const { data: data2 } = await supabase
       .from('academic_resources')
-      .select('id, title, file_url, is_paid, softcopy_price, level')
+      .select('id, title, level, department')
       .ilike('title', `%${keywords}%`)
       .limit(3);
-
-    if (error2 || !data2?.length) return null;
-    return data2;
+    return data2?.length ? data2 : null;
   }
 
-  if (error || !data?.length) return null;
-  return data;
+  return data?.length ? data : null;
 }
 
-// ── List resources by level ───────────────────────────────────────────────────
-async function listResources(intent) {
-  const level = intent.level ? `${intent.level}L` : null;
+// ── List resources ────────────────────────────────────────────────────────────
+async function listResources(level) {
+  const levelStr = level ? `${level}L` : null;
 
   let query = supabase
     .from('academic_resources')
-    .select('id, title, softcopy_price, is_paid, level, file_url')
+    .select('id, title, level, softcopy_price, is_paid')
     .order('title', { ascending: true })
     .limit(10);
 
-  if (level) query = query.eq('level', level);
+  if (levelStr) query = query.eq('level', levelStr);
 
   const { data, error } = await query;
-  if (error || !data?.length) return null;
-  return data;
-}
-
-// ── Paystack link generator ───────────────────────────────────────────────────
-async function generatePaystackLink(resource, phone) {
-  try {
-    const amount = Math.round(Number(resource.softcopy_price) * 100);
-    const email = `${phone}@campuscircle.ng`;
-
-    const res = await fetch('https://api.paystack.co/transaction/initialize', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email,
-        amount,
-        currency: 'NGN',
-        reference: `cc_wa_${resource.id}_${Date.now()}`,
-        metadata: {
-          resource_id: resource.id,
-          whatsapp_phone: phone,
-          file_url: resource.file_url,
-        },
-      }),
-    });
-
-    const data = await res.json();
-    console.log('Paystack response:', JSON.stringify(data));
-    return data?.data?.authorization_url || null;
-  } catch (err) {
-    console.error('Paystack error:', err);
-    return null;
-  }
-}
-
-// ── Send resource to student ──────────────────────────────────────────────────
-async function sendResource(phone, resource) {
-  const isPaid = resource.is_paid === 'true' || resource.is_paid === true;
-
-  if (!isPaid) {
-    return sendMessage(
-      phone,
-      `✅ *${resource.title}* (${resource.level})\n\nHere's your resource:\n${resource.file_url}\n\n📌 For more materials visit campuscircles.vercel.app`
-    );
-  }
-
-  const payLink = await generatePaystackLink(resource, phone);
-  if (!payLink) {
-    return sendMessage(
-      phone,
-      `⚠️ Payment link failed. Please get this resource directly on the site:\ncampuscircles.vercel.app`
-    );
-  }
-
-  return sendMessage(
-    phone,
-    `📄 *${resource.title}* (${resource.level})\n\n💳 This resource costs *₦${resource.softcopy_price}*\n\nPay securely here:\n${payLink}\n\nYou will receive the Drive link immediately after payment ✅`
-  );
+  return error || !data?.length ? null : data;
 }
 
 // ── Save session ──────────────────────────────────────────────────────────────
-async function saveSession(phone, resources) {
+async function saveSession(phone, data) {
   await supabase.from('whatsapp_sessions').upsert({
     phone,
-    options: JSON.stringify(resources),
+    options: JSON.stringify(data),
     updated_at: new Date().toISOString(),
   });
 }
 
-// ── Handle numbered follow-up ─────────────────────────────────────────────────
-async function handleNumberedReply(phone, text) {
-  const num = parseInt(text.trim());
-  if (isNaN(num)) return false;
-
+async function getSession(phone) {
   const { data } = await supabase
     .from('whatsapp_sessions')
     .select('options')
     .eq('phone', phone)
     .single();
+  return data?.options ? JSON.parse(data.options) : null;
+}
 
-  if (!data?.options) return false;
+async function clearSession(phone) {
+  await supabase.from('whatsapp_sessions').delete().eq('phone', phone);
+}
 
-  const options = JSON.parse(data.options);
-  const resource = options[num - 1];
+// ── Handle numbered reply ─────────────────────────────────────────────────────
+async function handleNumberedReply(phone, text) {
+  const num = parseInt(text.trim());
+  if (isNaN(num)) return false;
+
+  const session = await getSession(phone);
+  if (!session) return false;
+
+  // Registration flow
+  if (session.step) return false;
+
+  const resource = session[num - 1];
   if (!resource) return false;
 
-  await sendResource(phone, resource);
-  await supabase.from('whatsapp_sessions').delete().eq('phone', phone);
+  await sendMessage(
+    phone,
+    `✅ *${resource.title}* (${resource.level})\n\nGet access here:\ncampuscircles.vercel.app\n\n📌 Login or register to unlock this resource.`
+  );
+
+  await clearSession(phone);
   return true;
+}
+
+// ── Registration flow ─────────────────────────────────────────────────────────
+async function handleRegistration(phone, text, session) {
+  if (!session?.step) {
+    await saveSession(phone, { step: 'name' });
+    return sendMessage(phone, `👤 Let's get you registered!\n\nWhat is your *full name*?`);
+  }
+
+  if (session.step === 'name') {
+    await saveSession(phone, { step: 'email', name: text });
+    return sendMessage(phone, `📧 What is your *email address*?`);
+  }
+
+  if (session.step === 'email') {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(text)) {
+      return sendMessage(phone, `❌ That doesn't look like a valid email. Please enter a valid email address.`);
+    }
+
+    await createUser(phone, session.name, text);
+    await clearSession(phone);
+
+    return sendMessage(
+      phone,
+      `🎉 Welcome to Campus Circle, *${session.name}*!\n\nYour account is set up.\n\n🌐 Visit campuscircles.vercel.app to access your full library and all platform features.\n\nType *help* anytime to see what I can do for you!`
+    );
+  }
+}
+
+// ── Admin: broadcast ──────────────────────────────────────────────────────────
+async function handleBroadcast(phone, text) {
+  if (!ADMIN_NUMBERS.includes(phone)) {
+    return sendMessage(phone, `❌ You don't have permission to use this command.`);
+  }
+
+  const message = text.replace('/broadcast', '').trim();
+  if (!message) {
+    return sendMessage(phone, `Usage: /broadcast Your message here`);
+  }
+
+  const { data: users } = await supabase
+    .from('bot_users')
+    .select('phone');
+
+  if (!users?.length) {
+    return sendMessage(phone, `No users to broadcast to yet.`);
+  }
+
+  let sent = 0;
+  for (const user of users) {
+    if (user.phone !== phone) {
+      await sendMessage(user.phone, `📢 *Campus Circle Update*\n\n${message}`);
+      sent++;
+    }
+  }
+
+  return sendMessage(phone, `✅ Broadcast sent to ${sent} users.`);
+}
+
+// ── Admin: notify reporter ────────────────────────────────────────────────────
+async function handleNotifyReporter(phone, text) {
+  if (!ADMIN_NUMBERS.includes(phone)) {
+    return sendMessage(phone, `❌ You don't have permission to use this command.`);
+  }
+
+  // Format: /notify +2348161268826 SOC 333 past questions
+  const parts = text.replace('/notify', '').trim().split(' ');
+  const reporterPhone = parts[0];
+  const resourceName = parts.slice(1).join(' ');
+
+  if (!reporterPhone || !resourceName) {
+    return sendMessage(phone, `Usage: /notify [phone] [resource name]\nE.g: /notify 2348161268826 SOC 333 past questions`);
+  }
+
+  await sendMessage(
+    reporterPhone,
+    `✅ *Good news!*\n\nThe resource you reported as missing has been added:\n\n📄 *${resourceName}*\n\nGet it here:\ncampuscircles.vercel.app\n\n📌 Login to access it in your library.`
+  );
+
+  return sendMessage(phone, `✅ Reporter notified successfully.`);
 }
 
 // ── Main message handler ──────────────────────────────────────────────────────
 async function handleMessage(phone, text) {
   const lower = text.toLowerCase().trim();
 
+  // Track user
+  await trackUser(phone);
+
+  // Admin commands
+  if (lower.startsWith('/broadcast')) return handleBroadcast(phone, text);
+  if (lower.startsWith('/notify')) return handleNotifyReporter(phone, text);
+
+  // Check for active registration session
+  const session = await getSession(phone);
+  if (session?.step) return handleRegistration(phone, text, session);
+
+  // Welcome
   if (lower === 'hi' || lower === 'hello' || lower === 'start') {
+    const user = await getUser(phone);
+    const name = user?.full_name ? `, ${user.full_name.split(' ')[0]}` : '';
+
     return sendMessage(
       phone,
-      `👋 Welcome to *Campus Circle*!\n\nYour academic resource assistant for UNIZIK.\n\n📚 *Find a resource:*\nJust tell me what you need\n_"Social stratification lecture note"_\n_"300 level political sociology"_\n\n📋 *Browse by level:*\nType _"list 300 level"_ to see all available\n\n🌐 Full platform: campuscircles.vercel.app\n\nType *help* for more options.`
+      `👋 Hello${name}! Welcome to *Campus Circle* — Your Ultimate Academic Success Partner! 🎓\n\nI'm your AI study assistant, here to help you succeed at UNIZIK.\n\n📚 *What I can do:*\n• Find lecture notes, past questions & textbooks\n• Tell you what resources are available for your level\n• Answer questions about your courses\n• Help you navigate the Campus Circle platform\n\n🌐 *Full platform:* campuscircles.vercel.app\n\n_Just tell me what you need or type *help* to see all options._`
     );
   }
 
+  // Help
   if (lower === 'help') {
     return sendMessage(
       phone,
-      `ℹ️ *Campus Circle Help*\n\n📚 *Find a resource:*\nJust describe what you need\n_"Social stratification lecture note"_\n\n📋 *List resources:*\n_"list 300 level"_\n_"show 200 level resources"_\n_"available 100 level"_\n\n🌐 *Visit site:* campuscircles.vercel.app\n\n📩 *Support:* Describe your issue and we'll help.`
+      `ℹ️ *Campus Circle Bot — What I Can Do*\n\n📚 *Find a resource:*\n_"SOC 333 past questions"_\n_"300 level political sociology notes"_\n\n📋 *Browse by level:*\n_"list 300 level resources"_\n_"show available 200 level"_\n\n🚨 *Report missing resource:*\n_"I can't find SOC 333 past questions"_\n\n👤 *Register:*\nType _"register"_ to create your account\n\n🤖 *Ask anything:*\n_"What is social stratification?"_\n_"How do I pay for a resource?"_\n\n🌐 *Site:* campuscircles.vercel.app`
     );
   }
 
-  if (
-    lower.includes('list') ||
-    lower.includes('available') ||
-    lower.includes('show all') ||
-    lower.includes('show me') ||
-    (lower.includes('show') && lower.includes('level'))
-  ) {
-    const intent = await extractIntent(text);
-    const resources = await listResources(intent);
+  // Register
+  if (lower === 'register' || lower === 'sign up' || lower === 'create account') {
+    const user = await getUser(phone);
+    if (user?.full_name) {
+      return sendMessage(
+        phone,
+        `✅ You're already registered as *${user.full_name}*!\n\n🌐 Visit campuscircles.vercel.app to access your full library.`
+      );
+    }
+    return handleRegistration(phone, text, null);
+  }
+
+  // Classify intent
+  const intent = await extractIntent(text);
+
+  // Resource list
+  if (intent.intent === 'resource_list') {
+    const resources = await listResources(intent.level);
 
     if (!resources) {
       return sendMessage(
         phone,
-        `😔 No resources found${intent.level ? ` for ${intent.level}L` : ''} yet.\n\nVisit *campuscircles.vercel.app* to browse all materials.`
+        `😔 No resources found${intent.level ? ` for ${intent.level}L` : ''} yet.\n\nVisit *campuscircles.vercel.app* to browse all materials or report what's missing.`
       );
     }
 
@@ -239,43 +418,62 @@ async function handleMessage(phone, text) {
       const paid = r.is_paid === 'true' || r.is_paid === true;
       msg += `${i + 1}. ${r.title}\n    ${paid ? `₦${r.softcopy_price}` : 'Free'}\n\n`;
     });
-    msg += `Reply with the number to get any resource.\nE.g. _"1"_`;
+    msg += `Reply with a number to get the site link.\nOr visit campuscircles.vercel.app to browse all.`;
 
     await saveSession(phone, resources);
     return sendMessage(phone, msg);
   }
 
-  const intent = await extractIntent(text);
+  // Resource search
+  if (intent.intent === 'resource_search' && intent.keywords) {
+    const resources = await findResource(intent.keywords, intent.level);
 
-  if (intent.intent === 'other') {
-    const reply =
-      intent.message ||
-      `I'm here to help you find academic resources 📚\n\nTry:\n• _"Social stratification lecture note"_\n• _"list 300 level resources"_\n\nOr visit campuscircles.vercel.app`;
-    return sendMessage(phone, reply);
+    if (!resources) {
+      return sendMessage(
+        phone,
+        `😔 *"${intent.keywords}"* isn't available yet.\n\nWould you like to report this as a missing resource so we can add it?\n\nReply _"yes report it"_ or visit campuscircles.vercel.app to browse what's available.`
+      );
+    }
+
+    if (resources.length === 1) {
+      return sendMessage(
+        phone,
+        `✅ Found it!\n\n📄 *${resources[0].title}* (${resources[0].level})\n\nGet access here:\ncampuscircles.vercel.app\n\n📌 Login or register to unlock this resource.`
+      );
+    }
+
+    let msg = `📚 I found ${resources.length} matching resources:\n\n`;
+    resources.forEach((r, i) => {
+      msg += `${i + 1}. *${r.title}* (${r.level})\n\n`;
+    });
+    msg += `Reply with the number to get the site link.`;
+
+    await saveSession(phone, resources);
+    return sendMessage(phone, msg);
   }
 
-  const resources = await findResource(intent);
+  // Missing resource report
+  if (
+    intent.intent === 'missing_report' ||
+    lower.includes('yes report it') ||
+    lower.includes('report it')
+  ) {
+    const resourceName = intent.keywords || text;
 
-  if (!resources) {
+    await sendEmail(
+      `Missing Resource Report — Campus Circle Bot`,
+      `A student reported a missing resource:\n\nResource: ${resourceName}\nReported by: ${phone}\nTime: ${new Date().toISOString()}\n\nPlease add this resource to the platform.\n\nTo notify the student when added, reply:\n/notify ${phone} ${resourceName}`
+    );
+
     return sendMessage(
       phone,
-      `😔 I couldn't find that resource.\n\nTry:\n• Rephrasing your request\n• _"list ${intent.level || '300'} level"_ to browse all available\n• Visit *campuscircles.vercel.app*`
+      `✅ *Report received!*\n\nWe'll work on adding *"${resourceName}"* as soon as possible.\n\nYou'll get a notification here once it's available on campuscircles.vercel.app 📬`
     );
   }
 
-  if (resources.length > 1) {
-    let msg = `📚 I found ${resources.length} resources:\n\n`;
-    resources.forEach((r, i) => {
-      const paid = r.is_paid === 'true' || r.is_paid === true;
-      msg += `${i + 1}. *${r.title}* (${r.level})\n    ${paid ? `₦${r.softcopy_price}` : 'Free'}\n\n`;
-    });
-    msg += `Reply with the number to get it. E.g. _"1"_`;
-
-    await saveSession(phone, resources);
-    return sendMessage(phone, msg);
-  }
-
-  return sendResource(phone, resources[0]);
+  // Support or general AI response
+  const aiReply = await getAIResponse(text);
+  return sendMessage(phone, aiReply);
 }
 
 // ── Vercel serverless handler ─────────────────────────────────────────────────
